@@ -28,7 +28,9 @@ def test_consultar_vistoria_sucesso():
 
 
 def test_abrir_sinistro_sucesso():
-    resultado = processar_mensagem("abrir sinistro AP003")
+    resultado = processar_mensagem(
+        "abrir sinistro AP003 tipo: roubo, descrição: furto de veículo"
+    )
     assert resultado.success is True
     assert resultado.data["numero_apolice"] == "AP003"
     assert resultado.data["status"] == "aberto"
