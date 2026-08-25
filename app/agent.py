@@ -22,23 +22,49 @@ def decide_tool(mensagem: str) -> ToolCall:
 
     if "abrir sinistro" in mensagem_lower or "abrir um sinistro" in mensagem_lower:
         numero_apolice = _extrair_codigo(mensagem, prefixo="AP")
+        tipo = _extrair_campo(mensagem, r"tipo[:\s]+([^\n,\.]+)")
+        descricao = _extrair_campo(mensagem, r"descri[çc][ãa]o[:\s]+([^\n]+)")
+
+        faltantes = [c for c, v in [("tipo", tipo), ("descrição", descricao)] if v is None]
+        if faltantes:
+            raise CamposFaltantesError(
+                tool_name="abrir_sinistro",
+                campos=faltantes,
+                mensagem_usuario=(
+                    f"Para abrir o sinistro, preciso que você informe: {', '.join(faltantes)}."
+                ),
+            )
+
         return ToolCall(
             tool_name="abrir_sinistro",
             payload={
                 "numero_apolice": numero_apolice,
-                "tipo": "não especificado",
-                "descricao": mensagem,
+                "tipo": tipo,
+                "descricao": descricao,
             },
         )
 
     if "agendar vistoria" in mensagem_lower:
         sinistro_id = _extrair_codigo(mensagem, prefixo="SN")
+        data_agendada = _extrair_campo(mensagem, r"data[:\s]+([^\n,\.]+)")
+        endereco = _extrair_campo(mensagem, r"endere[çc]o[:\s]+([^\n]+)")
+
+        faltantes = [c for c, v in [("data", data_agendada), ("endereço", endereco)] if v is None]
+        if faltantes:
+            raise CamposFaltantesError(
+                tool_name="agendar_vistoria",
+                campos=faltantes,
+                mensagem_usuario=(
+                    f"Para agendar a vistoria, preciso que você informe: {', '.join(faltantes)}."
+                ),
+            )
+
         return ToolCall(
             tool_name="agendar_vistoria",
             payload={
                 "sinistro_id": sinistro_id,
-                "data_agendada": "não especificada",
-                "endereco": "não especificado",
+                "data_agendada": data_agendada,
+                "endereco": endereco,
             },
         )
 
@@ -57,6 +83,14 @@ def decide_tool(mensagem: str) -> ToolCall:
     raise ValueError(f"Nenhuma tool mapeada para a mensagem: '{mensagem}'")
 
 
+class CamposFaltantesError(Exception):
+    def __init__(self, tool_name: str, campos: list[str], mensagem_usuario: str):
+        self.tool_name = tool_name
+        self.campos = campos
+        self.mensagem_usuario = mensagem_usuario
+        super().__init__(mensagem_usuario)
+
+
 def _extrair_codigo(mensagem: str, prefixo: str) -> str:
     palavras = mensagem.upper().split()
     padrao = re.compile(rf"^{prefixo}\d+$")
@@ -64,6 +98,13 @@ def _extrair_codigo(mensagem: str, prefixo: str) -> str:
         if padrao.match(palavra):
             return palavra
     raise ValueError(f"Código com prefixo {prefixo} não encontrado na mensagem")
+
+
+def _extrair_campo(mensagem: str, padrao: str) -> str | None:
+    match = re.search(padrao, mensagem, flags=re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return None
 
 
 def execute_tool(tool_call: ToolCall) -> ToolResult:
@@ -86,5 +127,13 @@ def execute_tool(tool_call: ToolCall) -> ToolResult:
 
 def processar_mensagem(mensagem: str) -> ToolResult:
     logger.info(f"Mensagem recebida: '{mensagem}'")
-    tool_call = decide_tool(mensagem)
+    try:
+        tool_call = decide_tool(mensagem)
+    except CamposFaltantesError as e:
+        logger.warning(f"Campos faltantes para {e.tool_name}: {e.campos}")
+        return ToolResult(tool_name=e.tool_name, success=False, data=e.mensagem_usuario)
+    except ValueError as e:
+        logger.warning(f"Não foi possível decidir a tool: {e}")
+        return ToolResult(tool_name="desconhecida", success=False, data=str(e))
+
     return execute_tool(tool_call)
